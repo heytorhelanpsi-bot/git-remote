@@ -16,5 +16,13 @@ App web de agentes persistentes com conversas, tarefas agendadas (no navegador) 
 - Rodar localmente: `vercel dev` (após `npm i -g vercel`).
 - Deploy: `vercel --prod`.
 
-## Pendências
-- Tarefas agendadas só rodam com a aba aberta. Para execução no servidor, é preciso armazenamento (ex.: Vercel KV/Blob) e um Cron Job.
+## Agendamento no servidor
+- `lib/kv.js`: armazenamento REST compatível com Upstash/Vercel KV. Variáveis: `KV_REST_API_URL`, `KV_REST_API_TOKEN`.
+- `api/tasks.js`: o app envia a lista de tarefas (`PUT`) e lê o estado (`GET`).
+- `api/cron.js`: executado pelo Vercel Cron (`vercel.json`, a cada hora). Exige `CRON_SECRET` (o Vercel envia como Bearer).
+- `api/runs.js`: resultados das execuções, exibidos no chat do agente pelo app.
+- Publicado, o navegador não executa tarefas (evita duplicidade). Em arquivo local, executa.
+- Atenção: o plano Hobby do Vercel aceita cron apenas diário; para horário é preciso plano pago.
+
+## Variáveis de ambiente (Vercel)
+- `ANTHROPIC_API_KEY`, `APP_TOKEN`, `KV_REST_API_URL`, `KV_REST_API_TOKEN`, `CRON_SECRET`.

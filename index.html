@@ -255,6 +255,14 @@ const save = () => localStorage.setItem(KEY, JSON.stringify(state));
 const uid = () => Math.random().toString(36).slice(2, 10);
 const fmt = (t) => new Date(t).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
 
+// Publicado: o servidor executa as tarefas (cron). Local (arquivo): o navegador executa.
+const apiBase = () => {
+  const ep = state.endpoint || (location.protocol.startsWith('http') ? '/api/chat' : '');
+  return ep ? ep.replace(/\/chat$/, '') : '';
+};
+const authHeaders = () => (state.token ? { Authorization: 'Bearer ' + state.token } : {});
+const serverMode = () => !!apiBase();
+
 function renderAgents() {
   const el = $('agentList');
   el.innerHTML = '';
@@ -285,7 +293,7 @@ function renderTasks() {
     div.querySelector('button').onclick = (e) => {
       e.stopPropagation();
       state.tasks = state.tasks.filter(x => x.id !== t.id);
-      save(); renderTasks();
+      save(); renderTasks(); syncTasks();
     };
     el.appendChild(div);
   });
@@ -329,8 +337,7 @@ async function askModel(agent, history) {
   // Publicado no Vercel, usa o endpoint do mesmo domínio por padrão
   const url = state.endpoint || (location.protocol.startsWith('http') ? '/api/chat' : '');
   if (url) {
-    const headers = { 'Content-Type': 'application/json' };
-    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    const headers = { 'Content-Type': 'application/json', ...authHeaders() };
     const r = await fetch(url, {
       method: 'POST',
       headers,
@@ -373,6 +380,7 @@ function escape(s) {
 
 // Tarefas agendadas: executam enquanto a aba estiver aberta
 async function runDueTasks() {
+  if (serverMode()) return renderTasks(); // o servidor executa; evita execução duplicada
   const now = Date.now();
   for (const t of state.tasks) {
     if (t.nextRun > now) continue;
@@ -390,6 +398,68 @@ async function runDueTasks() {
     }
   }
   renderTasks();
+}
+
+// Sincroniza as tarefas com o servidor (mantém o maior nextRun para não repetir execuções)
+async function syncTasks() {
+  const base = apiBase();
+  if (!base) return;
+  try {
+    const cur = await fetch(base + '/tasks', { headers: authHeaders() }).then(r => (r.ok ? r.json() : { tasks: [] }));
+    const serverNext = new Map((cur.tasks || []).map(t => [t.id, t.nextRun]));
+    const tasks = state.tasks.map(t => {
+      const agent = state.agents.find(a => a.id === t.agentId);
+      if (!agent) return null;
+      return {
+        id: t.id, agentId: t.agentId, agentName: agent.name, instructions: agent.instructions || '',
+        prompt: t.prompt, everyMin: t.everyMin, nextRun: Math.max(t.nextRun, serverNext.get(t.id) || 0)
+      };
+    }).filter(Boolean);
+    const r = await fetch(base + '/tasks', {
+      method: 'PUT',
+      headers: { 'Content-Type': 'application/json', ...authHeaders() },
+      body: JSON.stringify({ tasks })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+  } catch (e) {
+    console.warn('Sincronização de tarefas falhou:', e.message);
+  }
+}
+
+// Busca execuções feitas pelo cron e atualiza próximos horários
+async function pullServer() {
+  const base = apiBase();
+  if (!base) return;
+  try {
+    const [tr, rr] = await Promise.all([
+      fetch(base + '/tasks', { headers: authHeaders() }),
+      fetch(base + '/runs', { headers: authHeaders() }),
+    ]);
+    if (tr.ok) {
+      const { tasks } = await tr.json();
+      tasks.forEach(st => {
+        const t = state.tasks.find(x => x.id === st.id);
+        if (t) t.nextRun = st.nextRun;
+      });
+    }
+    if (rr.ok) {
+      const { runs } = await rr.json();
+      const firstTime = !state.seenRuns; // primeira vez neste navegador: não repete o histórico
+      state.seenRuns = state.seenRuns || [];
+      for (const run of runs) {
+        if (state.seenRuns.includes(run.id)) continue;
+        state.seenRuns.push(run.id);
+        const agent = state.agents.find(a => a.id === run.agentId);
+        if (!firstTime && agent) {
+          addMessage(agent.id, 'task', `⏰ Tarefa agendada (${fmt(run.ts)})\n${run.text}`);
+        }
+      }
+      state.seenRuns = state.seenRuns.slice(-300);
+    }
+    save(); renderTasks();
+  } catch (e) {
+    console.warn('Falha ao buscar execuções:', e.message);
+  }
 }
 
 // Eventos
@@ -428,7 +498,7 @@ $('saveTask').onclick = () => {
   save();
   $('taskModal').classList.remove('show');
   $('taskPrompt').value = '';
-  renderTasks();
+  renderTasks(); syncTasks();
   if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
 };
 
@@ -467,7 +537,7 @@ $('deleteAgentBtn').onclick = () => {
   $('agentTitle').textContent = 'Nenhum agente selecionado';
   $('agentSub').textContent = '';
   ['input','sendBtn','scheduleBtn','deleteAgentBtn'].forEach(i => $(i).disabled = true);
-  renderAgents(); renderTasks(); renderChat();
+  renderAgents(); renderTasks(); renderChat(); syncTasks();
 };
 
 $('sendBtn').onclick = send;
@@ -481,6 +551,8 @@ renderPurchases();
 renderChat();
 setInterval(runDueTasks, 30000);
 runDueTasks();
+pullServer();
+setInterval(pullServer, 60000);
 </script>
 </body>
 </html>
