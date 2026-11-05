@@ -1,0 +1,486 @@
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>Agentes</title>
+<style>
+  :root {
+    --bg: #0f1115; --panel: #171a21; --line: #262b36; --text: #e6e8ee;
+    --muted: #8a93a6; --accent: #6ea8ff; --ok: #3ecf8e; --danger: #ff6b6b;
+  }
+  * { box-sizing: border-box; }
+  body { margin: 0; font: 14px/1.5 system-ui, sans-serif; background: var(--bg); color: var(--text); height: 100vh; display: flex; }
+  aside { width: 280px; background: var(--panel); border-right: 1px solid var(--line); display: flex; flex-direction: column; }
+  aside header { padding: 16px; border-bottom: 1px solid var(--line); font-weight: 600; display: flex; justify-content: space-between; align-items: center; }
+  .section { padding: 12px 16px 4px; color: var(--muted); font-size: 12px; text-transform: uppercase; letter-spacing: .05em; }
+  .list { overflow-y: auto; padding: 4px 8px; flex: 1; }
+  .item { padding: 8px 10px; border-radius: 8px; cursor: pointer; display: flex; justify-content: space-between; gap: 8px; }
+  .item:hover { background: #1e222b; }
+  .item.active { background: #222836; }
+  .item small { color: var(--muted); }
+  button { background: var(--accent); color: #08101e; border: 0; border-radius: 8px; padding: 7px 12px; cursor: pointer; font-weight: 600; }
+  button.ghost { background: transparent; color: var(--muted); border: 1px solid var(--line); font-weight: 500; }
+  button.danger { background: var(--danger); }
+  main { flex: 1; display: flex; flex-direction: column; min-width: 0; }
+  .topbar { padding: 14px 20px; border-bottom: 1px solid var(--line); display: flex; justify-content: space-between; align-items: center; gap: 12px; }
+  .topbar h2 { margin: 0; font-size: 16px; }
+  .chat { flex: 1; overflow-y: auto; padding: 20px; display: flex; flex-direction: column; gap: 12px; }
+  .msg { max-width: 720px; padding: 10px 14px; border-radius: 12px; white-space: pre-wrap; word-wrap: break-word; }
+  .msg.user { align-self: flex-end; background: #243456; }
+  .msg.agent { align-self: flex-start; background: var(--panel); border: 1px solid var(--line); }
+  .msg.task { align-self: stretch; background: #13261d; border: 1px solid #1f4a36; font-size: 13px; }
+  .composer { border-top: 1px solid var(--line); padding: 12px 20px; display: flex; gap: 10px; }
+  textarea, input, select { background: #0c0e13; color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 8px 10px; font: inherit; }
+  textarea { flex: 1; resize: none; height: 60px; }
+  input, select { width: 100%; }
+  .empty { margin: auto; color: var(--muted); text-align: center; max-width: 360px; }
+  .modal-bg { position: fixed; inset: 0; background: rgba(0,0,0,.6); display: none; align-items: center; justify-content: center; }
+  .modal-bg.show { display: flex; }
+  .modal { background: var(--panel); border: 1px solid var(--line); border-radius: 12px; padding: 20px; width: 460px; display: flex; flex-direction: column; gap: 10px; }
+  .modal label { font-size: 12px; color: var(--muted); display: flex; flex-direction: column; gap: 4px; }
+  .row { display: flex; gap: 8px; justify-content: flex-end; }
+  .tag { font-size: 11px; color: var(--ok); }
+</style>
+</head>
+<body>
+
+<aside>
+  <header>
+    Agentes
+    <button id="newAgentBtn">+ Novo</button>
+  </header>
+  <div class="section">Agentes</div>
+  <div class="list" id="agentList"></div>
+  <div class="section">Tarefas agendadas</div>
+  <div class="list" id="taskList" style="flex:0 0 auto; max-height:200px"></div>
+  <div class="section">Compras para aprovar</div>
+  <div class="list" id="purchaseList" style="flex:0 0 auto; max-height:220px"></div>
+  <div style="padding:12px 16px; border-top:1px solid var(--line)">
+    <button class="ghost" id="proposeBtn" style="width:100%; margin-bottom:8px">+ Propor compra</button>
+    <button class="ghost" id="settingsBtn" style="width:100%">Configurações</button>
+  </div>
+</aside>
+
+<main>
+  <div class="topbar">
+    <div>
+      <h2 id="agentTitle">Nenhum agente selecionado</h2>
+      <small id="agentSub" style="color:var(--muted)"></small>
+    </div>
+    <div style="display:flex; gap:8px">
+      <button class="ghost" id="scheduleBtn" disabled>Agendar tarefa</button>
+      <button class="ghost danger" id="deleteAgentBtn" disabled>Excluir</button>
+    </div>
+  </div>
+  <div class="chat" id="chat"></div>
+  <div class="composer">
+    <textarea id="input" placeholder="Peça algo ao agente… (Enter envia, Shift+Enter quebra linha)" disabled></textarea>
+    <button id="sendBtn" disabled>Enviar</button>
+  </div>
+</main>
+
+<!-- Modal: novo agente -->
+<div class="modal-bg" id="agentModal">
+  <div class="modal">
+    <h3 style="margin:0">Novo agente</h3>
+    <label>Nome <input id="agentName" placeholder="Ex.: Pesquisador" /></label>
+    <label>Instruções (comportamento permanente)
+      <textarea id="agentInstr" style="height:110px" placeholder="Você é um assistente que..."></textarea>
+    </label>
+    <div class="row">
+      <button class="ghost" data-close>Cancelar</button>
+      <button id="saveAgent">Criar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: agendar tarefa -->
+<div class="modal-bg" id="taskModal">
+  <div class="modal">
+    <h3 style="margin:0">Agendar tarefa</h3>
+    <label>Prompt que o agente vai executar
+      <textarea id="taskPrompt" style="height:90px" placeholder="Ex.: Resuma as notícias de hoje sobre IA"></textarea>
+    </label>
+    <label>Repetir a cada
+      <select id="taskEvery">
+        <option value="60">1 hora</option>
+        <option value="360">6 horas</option>
+        <option value="1440" selected>24 horas</option>
+        <option value="10080">7 dias</option>
+      </select>
+    </label>
+    <label>Primeira execução
+      <input type="datetime-local" id="taskStart" />
+    </label>
+    <div class="row">
+      <button class="ghost" data-close>Cancelar</button>
+      <button id="saveTask">Agendar</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: propor compra -->
+<div class="modal-bg" id="purchaseModal">
+  <div class="modal">
+    <h3 style="margin:0">Propor compra</h3>
+    <small style="color:var(--muted)">Nada é comprado aqui. Você aprova depois e finaliza no site da loja, onde o pagamento é feito. Este app não recebe nem guarda dados de cartão.</small>
+    <label>Item <input id="pItem" placeholder="Ex.: Livro X" /></label>
+    <label>Loja <input id="pMerchant" placeholder="Ex.: Nome da loja" /></label>
+    <label>Valor (R$) <input id="pPrice" type="number" min="0.01" step="0.01" /></label>
+    <label>Link de checkout da loja (https)
+      <input id="pUrl" placeholder="https://..." />
+    </label>
+    <div class="row">
+      <button class="ghost" data-close>Cancelar</button>
+      <button id="savePurchase">Enviar para aprovação</button>
+    </div>
+  </div>
+</div>
+
+<!-- Modal: configurações -->
+<div class="modal-bg" id="settingsModal">
+  <div class="modal">
+    <h3 style="margin:0">Configurações</h3>
+    <label>Endpoint do modelo (opcional)
+      <input id="endpoint" placeholder="https://seu-servidor.com/api/chat" />
+      <small style="color:var(--muted)">Recebe POST {instructions, messages} e deve responder {reply}, opcionalmente com {purchase:{item, merchant, price, url}} para propor uma compra. Sem endpoint, o app usa respostas de demonstração.</small>
+    </label>
+    <label>Token de acesso (o mesmo APP_TOKEN configurado no Vercel)
+      <input id="token" type="password" placeholder="deixe vazio se não usar" />
+    </label>
+    <label>Limite por compra (R$) <input id="limitPer" type="number" min="1" step="1" /></label>
+    <label>Limite diário total (R$) <input id="limitDay" type="number" min="1" step="1" /></label>
+    <div class="row">
+      <button class="ghost" data-close>Fechar</button>
+      <button id="saveSettings">Salvar</button>
+    </div>
+  </div>
+</div>
+
+<script>
+const KEY = 'agentes-app-v1';
+let state = JSON.parse(localStorage.getItem(KEY) || 'null') || {
+  agents: [], tasks: [], messages: {}, endpoint: '', purchases: [],
+  limits: { perPurchase: 200, daily: 500 }, audit: []
+};
+state.purchases ||= []; state.audit ||= [];
+state.limits ||= { perPurchase: 200, daily: 500 };
+let currentId = null;
+
+// ---- Compras: o agente só propõe; a aprovação é sempre do usuário ----
+const audit = (action, detail) => {
+  state.audit.push({ ts: Date.now(), action, detail });
+  if (state.audit.length > 500) state.audit.shift();
+};
+
+function spentToday() {
+  const start = new Date(); start.setHours(0, 0, 0, 0);
+  return state.purchases
+    .filter(p => p.status !== 'recusada' && p.approvedAt && p.approvedAt >= start.getTime())
+    .reduce((s, p) => s + p.price, 0);
+}
+
+function proposePurchase({ item, merchant, price, url, source }) {
+  const p = Number(price);
+  if (!item || !merchant || !(p > 0)) return { ok: false, msg: 'Dados da compra incompletos.' };
+  let u;
+  try { u = new URL(url); } catch { return { ok: false, msg: 'Link inválido.' }; }
+  if (u.protocol !== 'https:') return { ok: false, msg: 'O link precisa ser https.' };
+  const purchase = {
+    id: uid(), item: String(item).slice(0, 200), merchant: String(merchant).slice(0, 120),
+    price: Math.round(p * 100) / 100, url: u.href, source: source || 'manual',
+    status: 'pendente', createdAt: Date.now()
+  };
+  state.purchases.push(purchase);
+  audit('proposta', `${purchase.item} | ${purchase.merchant} | R$ ${purchase.price} | origem: ${purchase.source}`);
+  save(); renderPurchases();
+  return { ok: true, purchase };
+}
+
+function approvePurchase(id) {
+  const p = state.purchases.find(x => x.id === id);
+  if (!p || p.status !== 'pendente') return;
+  if (p.price > state.limits.perPurchase) {
+    alert(`Acima do limite por compra (R$ ${state.limits.perPurchase}). Ajuste em Configurações se quiser.`);
+    return;
+  }
+  if (spentToday() + p.price > state.limits.daily) {
+    alert(`Isso ultrapassa o limite diário (R$ ${state.limits.daily}).`);
+    return;
+  }
+  const ok = confirm(`Confirmar aprovação?\n\n${p.item}\nLoja: ${p.merchant}\nValor: R$ ${p.price.toFixed(2)}\n\nVocê vai finalizar o pagamento no site da loja.`);
+  if (!ok) return;
+  p.status = 'aguardando pagamento';
+  p.approvedAt = Date.now();
+  audit('aprovada', `${p.item} | R$ ${p.price}`);
+  save(); renderPurchases();
+  window.open(p.url, '_blank', 'noopener,noreferrer');
+}
+
+function setPurchaseStatus(id, status) {
+  const p = state.purchases.find(x => x.id === id);
+  if (!p) return;
+  if (status === 'recusada' && p.status !== 'pendente') return;
+  p.status = status;
+  audit(status, `${p.item} | R$ ${p.price}`);
+  save(); renderPurchases();
+}
+
+function renderPurchases() {
+  const el = $('purchaseList');
+  el.innerHTML = '';
+  const list = state.purchases.filter(p => p.status === 'pendente' || p.status === 'aguardando pagamento').slice(-10);
+  if (!list.length) {
+    el.innerHTML = '<div style="padding:10px;color:var(--muted)">Nenhuma compra pendente.</div>';
+    return;
+  }
+  list.forEach(p => {
+    const div = document.createElement('div');
+    div.className = 'item';
+    const actions = p.status === 'pendente'
+      ? `<button style="padding:2px 8px" data-ok>Aprovar</button> <button class="ghost" style="padding:2px 8px" data-no>Recusar</button>`
+      : `<button class="ghost" style="padding:2px 8px" data-paid>Marcar pago</button>`;
+    div.innerHTML = `<span>${escape(p.item)}<br><small>R$ ${p.price.toFixed(2)} · ${escape(p.status)}</small></span>
+      <span>${actions}</span>`;
+    const ok = div.querySelector('[data-ok]'); if (ok) ok.onclick = () => approvePurchase(p.id);
+    const no = div.querySelector('[data-no]'); if (no) no.onclick = () => setPurchaseStatus(p.id, 'recusada');
+    const paid = div.querySelector('[data-paid]'); if (paid) paid.onclick = () => setPurchaseStatus(p.id, 'paga');
+    el.appendChild(div);
+  });
+}
+
+const $ = (id) => document.getElementById(id);
+const save = () => localStorage.setItem(KEY, JSON.stringify(state));
+const uid = () => Math.random().toString(36).slice(2, 10);
+const fmt = (t) => new Date(t).toLocaleString('pt-BR', { dateStyle: 'short', timeStyle: 'short' });
+
+function renderAgents() {
+  const el = $('agentList');
+  el.innerHTML = '';
+  if (!state.agents.length) {
+    el.innerHTML = '<div style="padding:10px;color:var(--muted)">Crie seu primeiro agente.</div>';
+  }
+  state.agents.forEach(a => {
+    const div = document.createElement('div');
+    div.className = 'item' + (a.id === currentId ? ' active' : '');
+    div.innerHTML = `<span>${escape(a.name)}</span>`;
+    div.onclick = () => selectAgent(a.id);
+    el.appendChild(div);
+  });
+}
+
+function renderTasks() {
+  const el = $('taskList');
+  el.innerHTML = '';
+  if (!state.tasks.length) {
+    el.innerHTML = '<div style="padding:10px;color:var(--muted)">Nenhuma tarefa.</div>';
+  }
+  state.tasks.forEach(t => {
+    const agent = state.agents.find(a => a.id === t.agentId);
+    const div = document.createElement('div');
+    div.className = 'item';
+    div.innerHTML = `<span>${escape(agent ? agent.name : '?')}<br><small>próxima: ${fmt(t.nextRun)}</small></span>
+      <button class="ghost" style="padding:2px 8px" title="Remover">×</button>`;
+    div.querySelector('button').onclick = (e) => {
+      e.stopPropagation();
+      state.tasks = state.tasks.filter(x => x.id !== t.id);
+      save(); renderTasks();
+    };
+    el.appendChild(div);
+  });
+}
+
+function selectAgent(id) {
+  currentId = id;
+  const a = state.agents.find(x => x.id === id);
+  $('agentTitle').textContent = a.name;
+  $('agentSub').textContent = a.instructions ? a.instructions.slice(0, 120) : 'Sem instruções';
+  ['input','sendBtn','scheduleBtn','deleteAgentBtn'].forEach(i => $(i).disabled = false);
+  renderAgents();
+  renderChat();
+}
+
+function renderChat() {
+  const el = $('chat');
+  const msgs = state.messages[currentId] || [];
+  el.innerHTML = '';
+  if (!msgs.length) {
+    el.innerHTML = '<div class="empty">Converse com o agente. As instruções dele valem para todas as conversas.</div>';
+    return;
+  }
+  msgs.forEach(m => {
+    const d = document.createElement('div');
+    d.className = 'msg ' + m.role;
+    d.textContent = m.text;
+    el.appendChild(d);
+  });
+  el.scrollTop = el.scrollHeight;
+}
+
+function addMessage(agentId, role, text) {
+  state.messages[agentId] = state.messages[agentId] || [];
+  state.messages[agentId].push({ role, text, ts: Date.now() });
+  save();
+  if (agentId === currentId) renderChat();
+}
+
+async function askModel(agent, history) {
+  // Publicado no Vercel, usa o endpoint do mesmo domínio por padrão
+  const url = state.endpoint || (location.protocol.startsWith('http') ? '/api/chat' : '');
+  if (url) {
+    const headers = { 'Content-Type': 'application/json' };
+    if (state.token) headers['Authorization'] = 'Bearer ' + state.token;
+    const r = await fetch(url, {
+      method: 'POST',
+      headers,
+      body: JSON.stringify({ instructions: agent.instructions, messages: history })
+    });
+    if (!r.ok) throw new Error('HTTP ' + r.status);
+    const data = await r.json();
+    // O agente pode propor compra, mas nunca aprova: vira pendente na fila
+    if (data.purchase) {
+      const res = proposePurchase({ ...data.purchase, source: 'agente ' + agent.name });
+      if (!res.ok) return data.reply + `\n\n[Proposta de compra recusada: ${res.msg}]`;
+      return data.reply + `\n\n🛒 Proposta enviada para aprovação: ${res.purchase.item} (R$ ${res.purchase.price.toFixed(2)})`;
+    }
+    return data.reply;
+  }
+  // Modo demonstração sem backend
+  const last = history[history.length - 1]?.text || '';
+  await new Promise(res => setTimeout(res, 500));
+  return `[demo] Recebi: "${last}"\n\nConfigure um endpoint em Configurações para respostas reais.`;
+}
+
+async function send() {
+  const text = $('input').value.trim();
+  if (!text || !currentId) return;
+  const agent = state.agents.find(a => a.id === currentId);
+  addMessage(currentId, 'user', text);
+  $('input').value = '';
+  const history = (state.messages[currentId] || []).map(m => ({ role: m.role === 'user' ? 'user' : 'assistant', text: m.text }));
+  try {
+    const reply = await askModel(agent, history);
+    addMessage(currentId, 'agent', reply);
+  } catch (e) {
+    addMessage(currentId, 'agent', 'Erro ao falar com o modelo: ' + e.message);
+  }
+}
+
+function escape(s) {
+  return String(s).replace(/[&<>"']/g, c => ({'&':'&amp;','<':'&lt;','>':'&gt;','"':'&quot;',"'":'&#39;'}[c]));
+}
+
+// Tarefas agendadas: executam enquanto a aba estiver aberta
+async function runDueTasks() {
+  const now = Date.now();
+  for (const t of state.tasks) {
+    if (t.nextRun > now) continue;
+    const agent = state.agents.find(a => a.id === t.agentId);
+    if (!agent) continue;
+    t.nextRun = now + t.everyMin * 60000;
+    save();
+    const history = [{ role: 'user', text: t.prompt }];
+    try {
+      const reply = await askModel(agent, history);
+      addMessage(agent.id, 'task', `⏰ Tarefa agendada (${fmt(now)})\n${reply}`);
+      if (Notification.permission === 'granted') new Notification(agent.name, { body: 'Tarefa concluída' });
+    } catch (e) {
+      addMessage(agent.id, 'task', `⏰ Falha na tarefa: ${e.message}`);
+    }
+  }
+  renderTasks();
+}
+
+// Eventos
+$('newAgentBtn').onclick = () => $('agentModal').classList.add('show');
+$('scheduleBtn').onclick = () => {
+  const d = new Date(Date.now() + 60 * 60000);
+  d.setMinutes(d.getMinutes() - d.getTimezoneOffset());
+  $('taskStart').value = d.toISOString().slice(0, 16);
+  $('taskModal').classList.add('show');
+};
+$('settingsBtn').onclick = () => {
+  $('endpoint').value = state.endpoint || '';
+  $('token').value = state.token || '';
+  $('limitPer').value = state.limits.perPurchase;
+  $('limitDay').value = state.limits.daily;
+  $('settingsModal').classList.add('show');
+};
+document.querySelectorAll('[data-close]').forEach(b => b.onclick = () => b.closest('.modal-bg').classList.remove('show'));
+
+$('saveAgent').onclick = () => {
+  const name = $('agentName').value.trim();
+  if (!name) return;
+  const a = { id: uid(), name, instructions: $('agentInstr').value.trim(), created: Date.now() };
+  state.agents.push(a);
+  save();
+  $('agentModal').classList.remove('show');
+  $('agentName').value = ''; $('agentInstr').value = '';
+  selectAgent(a.id);
+};
+
+$('saveTask').onclick = () => {
+  const prompt = $('taskPrompt').value.trim();
+  if (!prompt || !currentId) return;
+  const start = $('taskStart').value ? new Date($('taskStart').value).getTime() : Date.now();
+  state.tasks.push({ id: uid(), agentId: currentId, prompt, everyMin: Number($('taskEvery').value), nextRun: start });
+  save();
+  $('taskModal').classList.remove('show');
+  $('taskPrompt').value = '';
+  renderTasks();
+  if ('Notification' in window && Notification.permission === 'default') Notification.requestPermission();
+};
+
+$('saveSettings').onclick = () => {
+  state.endpoint = $('endpoint').value.trim();
+  state.token = $('token').value.trim();
+  const per = Number($('limitPer').value), day = Number($('limitDay').value);
+  if (per > 0) state.limits.perPurchase = per;
+  if (day > 0) state.limits.daily = day;
+  audit('limites alterados', `por compra R$ ${state.limits.perPurchase}, diário R$ ${state.limits.daily}`);
+  save();
+  $('settingsModal').classList.remove('show');
+};
+
+$('proposeBtn').onclick = () => {
+  ['pItem','pMerchant','pPrice','pUrl'].forEach(i => $(i).value = '');
+  $('purchaseModal').classList.add('show');
+};
+
+$('savePurchase').onclick = () => {
+  const res = proposePurchase({
+    item: $('pItem').value.trim(), merchant: $('pMerchant').value.trim(),
+    price: $('pPrice').value, url: $('pUrl').value.trim(), source: 'manual'
+  });
+  if (!res.ok) return alert(res.msg);
+  $('purchaseModal').classList.remove('show');
+};
+
+$('deleteAgentBtn').onclick = () => {
+  if (!currentId || !confirm('Excluir este agente, o histórico e suas tarefas?')) return;
+  state.agents = state.agents.filter(a => a.id !== currentId);
+  state.tasks = state.tasks.filter(t => t.agentId !== currentId);
+  delete state.messages[currentId];
+  currentId = null;
+  save();
+  $('agentTitle').textContent = 'Nenhum agente selecionado';
+  $('agentSub').textContent = '';
+  ['input','sendBtn','scheduleBtn','deleteAgentBtn'].forEach(i => $(i).disabled = true);
+  renderAgents(); renderTasks(); renderChat();
+};
+
+$('sendBtn').onclick = send;
+$('input').addEventListener('keydown', e => {
+  if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); send(); }
+});
+
+renderAgents();
+renderTasks();
+renderPurchases();
+renderChat();
+setInterval(runDueTasks, 30000);
+runDueTasks();
+</script>
+</body>
+</html>
